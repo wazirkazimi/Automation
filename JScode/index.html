@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Merger</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+      text-align: center;
+      font-size: 28px;
+    }
+
+    .form-group {
+      margin-bottom: 25px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #555;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .file-input-wrapper {
+      position: relative;
+      overflow: hidden;
+      display: inline-block;
+      width: 100%;
+    }
+
+    .file-input-wrapper input[type="file"] {
+      position: absolute;
+      left: -9999px;
+    }
+
+    .file-input-label {
+      display: block;
+      padding: 12px 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 5px;
+      cursor: pointer;
+      text-align: center;
+      font-weight: 600;
+      transition: all 0.3s ease;
+    }
+
+    .file-input-label:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .file-name {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #667eea;
+      font-weight: 500;
+    }
+
+    .upload-btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-top: 10px;
+    }
+
+    .upload-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .upload-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .progress-container {
+      display: none;
+      margin-top: 30px;
+    }
+
+    .progress-container.show {
+      display: block;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 14px;
+      color: #555;
+      font-weight: 600;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #e0e0e0;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s ease;
+      border-radius: 10px;
+    }
+
+    .status-message {
+      margin-top: 15px;
+      padding: 12px 15px;
+      border-radius: 5px;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: center;
+    }
+
+    .status-message.processing {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .status-message.success {
+      background: #e8f5e9;
+      color: #388e3c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .status-message.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+
+    .download-link {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 15px;
+      display: block;
+      text-align: center;
+      padding: 12px;
+      border: 2px solid #667eea;
+      border-radius: 5px;
+      transition: all 0.3s ease;
+    }
+
+    .download-link:hover {
+      background: #667eea;
+      color: white;
+    }
+
+    .error-text {
+      color: #c62828;
+      font-size: 13px;
+      margin-top: 5px;
+    }
+
+    .success-icon {
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 Video Merger</h1>
+
+    <form id="uploadForm">
+      <!-- Meme Video Upload -->
+      <div class="form-group">
+        <label for="memeVideo">Meme Video (Top)</label>
+        <div class="file-input-wrapper">
+          <input type="file" id="memeVideo" name="memeVideo" accept="video/*" required>
+          <label for="memeVideo" class="file-input-label">Choose Meme Video</label>
+        </div>
+        <div class="file-name" id="memeName">No file chosen</div>
+        <div class="error-text" id="memeError"></div>
+      </div>
+
+      <!-- Gameplay Video Upload -->
+      <div class="form-group">
+        <label for="gameplayVideo">Gameplay Video (Bottom)</label>
+        <div class="file-input-wrapper">
+          <input type="file" id="gameplayVideo" name="gameplayVideo" accept="video/*" required>
+          <label for="gameplayVideo" class="file-input-label">Choose Gameplay Video</label>
+        </div>
+        <div class="file-name" id="gameplayName">No file chosen</div>
+        <div class="error-text" id="gameplayError"></div>
+      </div>
+
+      <!-- Submit Button -->
+      <button type="submit" class="upload-btn" id="submitBtn">Merge Videos</button>
+    </form>
+
+    <!-- Progress Container -->
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-label">
+        <span id="progressText">Processing...</span>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="status-message processing" id="statusMessage">Processing your videos...</div>
+    </div>
+
+    <!-- Video Preview -->
+    <div id="previewContainer" style="display: none; margin-top: 30px;">
+      <h2 style="color: #333; margin-bottom: 15px; font-size: 20px;">Preview</h2>
+      <video id="previewVideo" style="width: 100%; border-radius: 5px; background: #000;" controls>
+        Your browser does not support the video tag.
+      </video>
+    </div>
+
+    <!-- Download Link -->
+    <div id="downloadContainer"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const memeInput = document.getElementById('memeVideo');
+    const gameplayInput = document.getElementById('gameplayVideo');
+    const memeNameDisplay = document.getElementById('memeName');
+    const gameplayNameDisplay = document.getElementById('gameplayName');
+    const submitBtn = document.getElementById('submitBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressText = document.getElementById('progressText');
+    const statusMessage = document.getElementById('statusMessage');
+    const downloadContainer = document.getElementById('downloadContainer');
+    const previewContainer = document.getElementById('previewContainer');
+    const previewVideo = document.getElementById('previewVideo');
+
+    // Update file name display
+    memeInput.addEventListener('change', (e) => {
+      memeNameDisplay.textContent = e.target.files[0]?.name || 'No file chosen';
+      document.getElementById('memeError').textContent = '';
+    });
+
+    gameplayInput.addEventListener('change', (e) => {
+      gameplayNameDisplay.textContent = e.target.files[0]?.name || 'No file chosen';
+      document.getElementById('gameplayError').textContent = '';
+    });
+
+    // Form submission
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const memeFile = memeInput.files[0];
+      const gameplayFile = gameplayInput.files[0];
+
+      // Validate file sizes (max 500MB each)
+      const maxSize = 500 * 1024 * 1024;
+      if (memeFile.size > maxSize) {
+        document.getElementById('memeError').textContent = 'File too large (max 500MB)';
+        return;
+      }
+      if (gameplayFile.size > maxSize) {
+        document.getElementById('gameplayError').textContent = 'File too large (max 500MB)';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('memeVideo', memeFile);
+      formData.append('gameplayVideo', gameplayFile);
+
+      try {
+        submitBtn.disabled = true;
+        progressContainer.classList.add('show');
+        downloadContainer.innerHTML = '';
+
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.status}`);
+        }
+
+        // Handle progress if available
+        const reader = response.body.getReader();
+        let receivedLength = 0;
+        const chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          receivedLength += value.length;
+        }
+
+        const chunksAll = new Uint8Array(receivedLength);
+        let position = 0;
+        for (const chunk of chunks) {
+          chunksAll.set(chunk, position);
+          position += chunk.length;
+        }
+
+        const result = JSON.parse(new TextDecoder().decode(chunksAll));
+
+        if (result.success) {
+          progressFill.style.width = '100%';
+          progressPercent.textContent = '100%';
+          statusMessage.className = 'status-message success';
+          statusMessage.innerHTML = '<span class="success-icon">✓</span> Video merged successfully!';
+
+          // Show video preview
+          previewVideo.src = result.downloadUrl;
+          previewContainer.style.display = 'block';
+
+          // Show download link
+          downloadContainer.innerHTML = `
+            <a href="${result.downloadUrl}?download=true" class="download-link" download="output.mp4">
+              ⬇️ Download output.mp4
+            </a>
+          `;
+
+          // Reset form after 5 seconds
+          setTimeout(() => {
+            form.reset();
+            progressContainer.classList.remove('show');
+            memeNameDisplay.textContent = 'No file chosen';
+            gameplayNameDisplay.textContent = 'No file chosen';
+            submitBtn.disabled = false;
+            downloadContainer.innerHTML = '';
+            previewContainer.style.display = 'none';
+            previewVideo.src = '';
+          }, 5000);
+        } else {
+          throw new Error(result.message || 'Unknown error occurred');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        statusMessage.className = 'status-message error';
+        statusMessage.textContent = '❌ Error: ' + error.message;
+        submitBtn.disabled = false;
+      }
+    });
+
+    // Simulate progress updates (optional - can be enhanced with WebSocket)
+    setInterval(() => {
+      if (progressContainer.classList.contains('show')) {
+        const currentWidth = parseFloat(progressFill.style.width);
+        if (currentWidth < 90) {
+          const newWidth = currentWidth + Math.random() * 5;
+          progressFill.style.width = Math.min(newWidth, 90) + '%';
+          progressPercent.textContent = Math.floor(Math.min(newWidth, 90)) + '%';
+        }
+      }
+    }, 500);
+  </script>
+</body>
+</html>
