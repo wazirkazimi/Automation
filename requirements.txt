@@ -20,7 +20,10 @@ python-dotenv==1.2.1
 
 # Production WSGI Server
 gunicorn==23.0.0
-gevent==24.1.1
-
-# Optional: For better async support
-greenlet==3.0.3
+# Note: gevent can require native build dependencies on some hosts (libffi, gcc).
+# To avoid build failures on Render, do not pin gevent here unless you have the
+# corresponding OS-level build packages installed. If you want to use gevent in
+# production, either install the system build deps in your Render build command
+# (see DEPLOYMENT.md) or pin a prebuilt wheel version that is compatible with
+# the Python runtime used by Render. For now we leave gevent out to ensure
+# smooth deployment. Use `gthread` worker-class in Gunicorn instead.
