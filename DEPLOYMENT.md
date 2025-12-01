@@ -142,6 +142,41 @@ response = requests.post(url, files=files, data=data)
 print(response.json())  # Should return {'success': true, 'job_id': '...'}
 ```
 
+## Deploying to Railway (Docker recommended)
+
+Railway runs containers. The most reliable way to deploy this app on Railway is to use the included `Dockerfile` which installs `ffmpeg` and necessary build dependencies.
+
+1. In your Railway project dashboard, create a new Service → "Deploy from GitHub" and select this repository.
+2. Railway will auto-detect Dockerfile and build a container image. No custom build command is required when using Docker.
+3. Set environment variables in Railway (Environment tab):
+
+```
+FLASK_ENV=production
+SECRET_KEY=<your-secret>
+UPLOAD_FOLDER=/app/uploads
+OUTPUT_FOLDER=/app/outputs
+PORT=10000   # Railway will override with the provided PORT at runtime
+CORS_ORIGINS=https://your-frontend-domain.com
+```
+
+4. If you prefer not to use Docker, you can still deploy by letting Railway run a Python build, but you must ensure `ffmpeg` and build tools are available. For that approach, use the Build Command described earlier in `DEPLOYMENT.md`.
+
+Notes & caveats:
+- Railway gives each service a memory limit tied to the plan you choose. For video processing choose a service with >= 2GB RAM; 4–8GB recommended for production workloads.
+- Railway filesystem is ephemeral: for persistent storage use S3 and update `stack_videos()` to upload outputs to S3 and return S3 URLs.
+- For production scale, run video processing in a worker (separate Railway service or background job) and keep the web service lightweight.
+
+Example quick-check commands (local):
+
+```bash
+# Build locally with Docker (optional)
+docker build -t editvid_api:local .
+docker run -e PORT=5000 -p 5000:5000 editvid_api:local
+
+# Then visit http://localhost:5000 or call /api/health
+curl http://localhost:5000/api/health
+```
+
 ## Integrating with Your Web App
 
 ### If Your Web App is on a Different Domain
