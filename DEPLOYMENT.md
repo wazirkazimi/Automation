@@ -43,8 +43,10 @@ git push -u origin main
 6. Fill in the form:
    - **Name**: `video-stacking-app` (or your preferred name)
    - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn --workers 4 --worker-class gevent --worker-connections 1000 --timeout 300 --bind 0.0.0.0:$PORT app:app`
+   - **Build Command (safe, recommended)**: `pip install -r requirements.txt`
+   - **Start Command (no-gevent)**: `gunicorn --workers 4 --worker-class gthread --threads 4 --timeout 300 --bind 0.0.0.0:$PORT app:app`
+   
+   Note: `gevent` can require native system libraries (C compiler, libffi, etc.) to build on some hosts. If you prefer to use `gevent` for async workers, see the "Optional: Install system build deps for gevent" section below.
    - **Instance Type**: Start with "Free" tier (or "Standard" for production)
    - **Auto-deploy**: Yes (recommended)
 
@@ -73,6 +75,22 @@ Change your **Build Command** to:
 ```bash
 apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
 ```
+
+**Optional: Install system build deps for `gevent` (only if you need gevent)**
+
+If you want to use `gevent` workers on Render (instead of `gthread`), add the system-level build dependencies before `pip install` so `gevent` can compile. Add the following to your Build Command instead:
+
+```bash
+apt-get update && apt-get install -y build-essential libffi-dev python3-dev ffmpeg && pip install -r requirements.txt
+```
+
+Then change **Start Command** to:
+
+```bash
+gunicorn --workers 4 --worker-class gevent --worker-connections 1000 --timeout 300 --bind 0.0.0.0:$PORT app:app
+```
+
+Warning: installing system build packages may increase build time and requires that Render's base image supports apt; use this only if you need gevent-specific features.
 
 **Option B: Use Render's Pre-built Buildpacks**
 
