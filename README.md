@@ -10,6 +10,7 @@ A Flask web application that stacks video clips (meme/content on top, gameplay o
 - 📊 Real-time progress tracking
 - 👁️ In-browser video preview
 - 📥 Download processed video
+- 📱 **Upload directly to Instagram Reels with caption**
 - ⚡ Background job processing with threading
 - 🚀 Cloud-ready (Render.com deployment)
 - 🌐 CORS support for cross-domain web app integration
@@ -153,6 +154,44 @@ Download processed video as attachment.
 
 **Response:** MP4 file download
 
+---
+
+### `POST /upload-to-instagram/<job_id>`
+Upload processed video to Instagram Reels.
+
+**Request:**
+```json
+{
+  "caption": "Your caption text here",
+  "hashtags": "#gaming #memes #viral"
+}
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "success": true,
+  "message": "Instagram upload started",
+  "status": "uploading"
+}
+```
+
+---
+
+### `GET /instagram-status/<job_id>`
+Get Instagram upload status for a job.
+
+**Response:**
+```json
+{
+  "instagram_status": "success",
+  "instagram_url": "https://www.instagram.com/reel/ABC123/",
+  "message": "Uploaded to Instagram!"
+}
+```
+
+Status values: `uploading`, `success`, `failed`
+
 ## Video Processing
 
 ### Input Requirements
@@ -189,6 +228,9 @@ Download processed video as attachment.
 | `WORKERS` | `4` | Gunicorn worker count |
 | `CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated) |
 | `PORT` | `5000` | Server port |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | - | Instagram Business Account ID (required for Instagram upload) |
+| `INSTAGRAM_ACCESS_TOKEN` | - | Instagram Graph API access token (required for Instagram upload) |
+| `PUBLIC_VIDEO_URL` | - | Public base URL for video access (e.g., `https://yourdomain.com`) |
 
 ### Create .env file for custom settings:
 ```bash
@@ -196,7 +238,36 @@ FLASK_ENV=development
 FLASK_APP=app.py
 SECRET_KEY=your-random-secret-key-here
 CORS_ORIGINS=http://localhost:3000,https://yourdomain.com
+
+# Instagram API Configuration (optional - required for Instagram upload feature)
+INSTAGRAM_BUSINESS_ACCOUNT_ID=your_instagram_business_account_id
+INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token
+PUBLIC_VIDEO_URL=https://yourdomain.com
 ```
+
+### Instagram API Setup
+
+To enable Instagram Reels upload functionality:
+
+1. **Create a Facebook App:**
+   - Go to [Facebook Developers](https://developers.facebook.com/)
+   - Create a new app or use an existing one
+   - Add "Instagram Graph API" product
+
+2. **Get Instagram Business Account ID:**
+   - Connect your Instagram Business account to your Facebook Page
+   - Get your Instagram Business Account ID from the Graph API Explorer
+
+3. **Generate Access Token:**
+   - Use Graph API Explorer to generate a long-lived access token
+   - Required permissions: `instagram_basic`, `instagram_content_publish`, `pages_read_engagement`
+
+4. **Set Public Video URL:**
+   - Instagram requires videos to be accessible via a public URL
+   - Set `PUBLIC_VIDEO_URL` to your server's public domain (e.g., `https://yourdomain.com`)
+   - The app will construct video URLs as: `{PUBLIC_VIDEO_URL}/preview/{filename}`
+
+**Note:** For local development, you may need to use a tunneling service (like ngrok) to make your local server publicly accessible for Instagram to download the video.
 
 ## Usage Examples
 
@@ -371,6 +442,7 @@ For issues, feature requests, or questions:
 
 ## Roadmap
 
+- [x] Instagram Reels upload with caption
 - [ ] Add fade transitions between clips
 - [ ] Support audio overlay/mixing
 - [ ] Add watermark option

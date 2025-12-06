@@ -10,6 +10,8 @@ import threading
 import uuid
 import time
 import os
+import logging
+import requests
 from pathlib import Path
 from dotenv import load_dotenv
 from config import get_config
@@ -19,12 +21,26 @@ from vi import stack_videos
 # Load environment variables
 load_dotenv()
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # Create app with config
 flask_env = os.getenv('FLASK_ENV', 'development')
 config_obj = get_config(flask_env)
 
 app = Flask(__name__)
 app.config.from_object(config_obj)
+
+# Instagram API Configuration
+INSTAGRAM_CONFIG = {
+    'BUSINESS_ACCOUNT_ID': os.getenv('INSTAGRAM_BUSINESS_ACCOUNT_ID', ''),
+    'ACCESS_TOKEN': os.getenv('INSTAGRAM_ACCESS_TOKEN', ''),
+    'PUBLIC_VIDEO_URL': os.getenv('PUBLIC_VIDEO_URL', '')  # Base URL for public video access
+}
 
 # Add CORS support for web app integration
 CORS(app, origins=os.getenv('CORS_ORIGINS', '*').split(','))
@@ -43,6 +59,127 @@ app.config['JOBS'] = {}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+class InstagramAPI:
+    """Handle Instagram Graph API operations for uploading reels"""
+    
+    @staticmethod
+    def upload_reel(video_url, caption, access_token=None, account_id=None):
+        """
+        Upload reel to Instagram using Graph API
+        
+        Args:
+            video_url: Publicly accessible URL to the video file
+            caption: Caption text for the reel
+            access_token: Instagram access token (optional, uses config if not provided)
+            account_id: Instagram Business Account ID (optional, uses config if not provided)
+        
+        Returns:
+            tuple: (success: bool, result: str or error message)
+        """
+        try:
+            access_token = access_token or INSTAGRAM_CONFIG['ACCESS_TOKEN']
+            account_id = account_id or INSTAGRAM_CONFIG['BUSINESS_ACCOUNT_ID']
+            
+            if not access_token or not account_id:
+                return False, "Instagram credentials not configured. Please set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_BUSINESS_ACCOUNT_ID environment variables."
+            
+            logger.info("Creating Instagram media container...")
+            create_url = f"https://graph.facebook.com/v21.0/{account_id}/media"
+            
+            payload = {
+                'video_url': video_url,
+                'media_type': 'REELS',
+                'caption': caption,
+                'share_to_feed': True,
+                'access_token': access_token
+            }
+            
+            response = requests.post(create_url, data=payload, timeout=30)
+            
+            if response.status_code != 200:
+                error_data = response.json().get('error', {})
+                error_msg = error_data.get('message', 'Unknown error')
+                logger.error(f"Failed to create container: {error_msg}")
+                return False, f"Instagram API error: {error_msg}"
+            
+            container_id = response.json().get('id')
+            if not container_id:
+                return False, "Failed to get container ID from Instagram API"
+            
+            logger.info(f"Container created: {container_id}")
+            
+            # Poll for status
+            logger.info("Waiting for Instagram to process video...")
+            max_attempts = 60  # 10 minutes max (60 * 10 seconds)
+            for attempt in range(max_attempts):
+                status_url = f"https://graph.facebook.com/v21.0/{container_id}"
+                status_response = requests.get(
+                    status_url,
+                    params={
+                        'fields': 'status_code,status',
+                        'access_token': access_token
+                    },
+                    timeout=10
+                )
+                
+                if status_response.status_code != 200:
+                    return False, f"Failed to check status: {status_response.text}"
+                
+                status_data = status_response.json()
+                status_code = status_data.get('status_code')
+                
+                if status_code == 'FINISHED':
+                    logger.info("Video processing finished")
+                    break
+                elif status_code == 'ERROR':
+                    error_msg = status_data.get('status', 'Unknown error')
+                    logger.error(f"Instagram processing error: {error_msg}")
+                    return False, f"Instagram processing error: {error_msg}"
+                
+                time.sleep(10)
+            else:
+                return False, "Timeout waiting for Instagram to process video"
+            
+            # Publish
+            logger.info("Publishing reel...")
+            publish_url = f"https://graph.facebook.com/v21.0/{account_id}/media_publish"
+            publish_response = requests.post(
+                publish_url,
+                data={
+                    'creation_id': container_id,
+                    'access_token': access_token
+                },
+                timeout=30
+            )
+            
+            if publish_response.status_code != 200:
+                error_data = publish_response.json().get('error', {})
+                error_msg = error_data.get('message', publish_response.text)
+                logger.error(f"Failed to publish: {error_msg}")
+                return False, f"Failed to publish reel: {error_msg}"
+            
+            publish_data = publish_response.json()
+            media_id = publish_data.get('id')
+            
+            if not media_id:
+                return False, "Failed to get media ID after publishing"
+            
+            instagram_url = f"https://www.instagram.com/reel/{media_id}/"
+            
+            logger.info(f"✅ Reel published: {instagram_url}")
+            return True, instagram_url
+            
+        except requests.exceptions.Timeout:
+            logger.error("Instagram API timeout")
+            return False, "Request timeout - Instagram API took too long to respond"
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Instagram API request error: {e}")
+            return False, f"Network error: {str(e)}"
+        except Exception as e:
+            logger.error(f"Instagram upload exception: {e}")
+            return False, str(e)
 
 # HTML Form
 HTML_FORM = '''
@@ -203,6 +340,48 @@ HTML_FORM = '''
             margin-top: 20px;
             display: none;
         }
+        .instagram-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: none;
+        }
+        .instagram-btn {
+            background: linear-gradient(135deg, #E4405F 0%, #C13584 100%) !important;
+            margin-top: 10px;
+        }
+        .instagram-status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+        }
+        .instagram-status.uploading {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        .instagram-status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .instagram-status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border 0.3s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
     </style>
 </head>
 <body>
@@ -225,7 +404,12 @@ HTML_FORM = '''
             
             <div class="form-group">
                 <label>✍️ Caption (Optional)</label>
-                <textarea name="caption" placeholder="Add a caption for your reel..."></textarea>
+                <textarea name="caption" id="captionInput" placeholder="Add a caption for your reel..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>🏷️ Hashtags (Optional)</label>
+                <input type="text" name="hashtags" id="hashtagsInput" placeholder="#gaming #memes #viral" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; transition: border 0.3s;">
             </div>
             
             <button type="submit" id="submitBtn">🚀 Create Video</button>
@@ -252,6 +436,23 @@ HTML_FORM = '''
                 <button onclick="downloadVideo()">📥 Download</button>
                 <button class="secondary-btn" onclick="createAnother()">➕ Create Another</button>
             </div>
+            
+            <!-- Instagram Upload Section -->
+            <div class="instagram-section" id="instagramSection">
+                <h3 style="margin-bottom: 15px; color: #333;">📱 Upload to Instagram</h3>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>✍️ Caption for Instagram</label>
+                    <textarea id="instagramCaption" placeholder="Add a caption for Instagram..."></textarea>
+                </div>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>🏷️ Hashtags</label>
+                    <input type="text" id="instagramHashtags" placeholder="#gaming #memes #viral">
+                </div>
+                <button class="instagram-btn" onclick="uploadToInstagram()" id="instagramUploadBtn">
+                    📤 Upload to Instagram
+                </button>
+                <div class="instagram-status" id="instagramStatus"></div>
+            </div>
         </div>
         
         <div class="error-msg" id="errorMsg"></div>
@@ -269,6 +470,7 @@ HTML_FORM = '''
         const errorMsg = document.getElementById('errorMsg');
         
         let currentDownloadUrl = '';
+        let currentJobId = '';
         let progressInterval;
         
         document.getElementById('meme').addEventListener('change', (e) => {
@@ -330,6 +532,7 @@ HTML_FORM = '''
                 if (data.success && data.job_id) {
                     // Poll the status endpoint for updates
                     const jobId = data.job_id;
+                    currentJobId = jobId;
                     console.log('Job ID received:', jobId);
                     progressFill.style.width = '20%';
                     progressText.textContent = 'Queued';
@@ -363,6 +566,19 @@ HTML_FORM = '''
                                     videoSource.src = js.preview_url;
                                     videoPreview.load();
                                     dashboard.style.display = 'block';
+                                    
+                                    // Show Instagram section and populate caption/hashtags
+                                    const instagramSection = document.getElementById('instagramSection');
+                                    instagramSection.style.display = 'block';
+                                    const captionInput = document.getElementById('captionInput');
+                                    const hashtagsInput = document.getElementById('hashtagsInput');
+                                    if (captionInput && captionInput.value) {
+                                        document.getElementById('instagramCaption').value = captionInput.value;
+                                    }
+                                    if (hashtagsInput && hashtagsInput.value) {
+                                        document.getElementById('instagramHashtags').value = hashtagsInput.value;
+                                    }
+                                    
                                     submitBtn.disabled = false;
                                 }, 400);
                             } else if (js.status === 'error') {
@@ -419,9 +635,92 @@ HTML_FORM = '''
             progressContainer.style.display = 'none';
             dashboard.style.display = 'none';
             errorMsg.style.display = 'none';
+            document.getElementById('instagramSection').style.display = 'none';
+            document.getElementById('instagramStatus').style.display = 'none';
             form.reset();
             document.getElementById('meme-info').textContent = '';
             document.getElementById('gameplay-info').textContent = '';
+            currentJobId = '';
+            currentDownloadUrl = '';
+        }
+        
+        async function uploadToInstagram() {
+            if (!currentJobId) {
+                alert('No video available to upload');
+                return;
+            }
+            
+            const uploadBtn = document.getElementById('instagramUploadBtn');
+            const statusDiv = document.getElementById('instagramStatus');
+            const caption = document.getElementById('instagramCaption').value.trim();
+            const hashtags = document.getElementById('instagramHashtags').value.trim();
+            
+            // Disable button
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '⏳ Uploading...';
+            
+            // Show status
+            statusDiv.className = 'instagram-status uploading';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = 'Uploading to Instagram... This may take a few minutes.';
+            
+            try {
+                const response = await fetch(`/upload-to-instagram/${currentJobId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        caption: caption,
+                        hashtags: hashtags
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Poll for Instagram upload status
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const statusResponse = await fetch(`/instagram-status/${currentJobId}`);
+                            const statusData = await statusResponse.json();
+                            
+                            if (statusData.instagram_status === 'success') {
+                                clearInterval(pollInterval);
+                                statusDiv.className = 'instagram-status success';
+                                statusDiv.innerHTML = `✅ Successfully uploaded to Instagram!<br><a href="${statusData.instagram_url}" target="_blank" style="color: #155724; text-decoration: underline;">View on Instagram</a>`;
+                                uploadBtn.disabled = true;
+                                uploadBtn.textContent = '✅ Uploaded';
+                            } else if (statusData.instagram_status === 'failed') {
+                                clearInterval(pollInterval);
+                                statusDiv.className = 'instagram-status error';
+                                statusDiv.textContent = `❌ Upload failed: ${statusData.instagram_error || 'Unknown error'}`;
+                                uploadBtn.disabled = false;
+                                uploadBtn.textContent = '📤 Upload to Instagram';
+                            } else if (statusData.instagram_status === 'uploading') {
+                                statusDiv.textContent = statusData.message || 'Uploading to Instagram...';
+                            }
+                        } catch (err) {
+                            console.error('Status polling error:', err);
+                        }
+                    }, 2000); // Poll every 2 seconds
+                    
+                    // Stop polling after 10 minutes
+                    setTimeout(() => {
+                        clearInterval(pollInterval);
+                    }, 600000);
+                } else {
+                    statusDiv.className = 'instagram-status error';
+                    statusDiv.textContent = `❌ ${data.error || 'Upload failed'}`;
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = '📤 Upload to Instagram';
+                }
+            } catch (error) {
+                statusDiv.className = 'instagram-status error';
+                statusDiv.textContent = `❌ Error: ${error.message}`;
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = '📤 Upload to Instagram';
+            }
         }
     </script>
 </body>
@@ -474,7 +773,10 @@ def process_video():
             'progress': 0,
             'message': 'Queued',
             'output_filename': output_filename,
-            'error': None
+            'error': None,
+            'caption': caption,
+            'instagram_status': None,
+            'instagram_url': None
         }
 
         def progress_cb(pct, msg=''):
@@ -526,6 +828,11 @@ def job_status(job_id):
     if job.get('status') == 'done':
         data['preview_url'] = f"/preview/{job['output_filename']}"
         data['download_url'] = f"/download/{job['output_filename']}"
+        # Include Instagram status if available
+        if 'instagram_status' in job:
+            data['instagram_status'] = job.get('instagram_status')
+            if job.get('instagram_url'):
+                data['instagram_url'] = job.get('instagram_url')
     if job.get('status') == 'error':
         data['error'] = job.get('error')
     return jsonify(data)
@@ -552,6 +859,92 @@ def download_video(filename):
         return send_file(str(file_path), as_attachment=True, download_name=filename, mimetype='video/mp4')
     except Exception as e:
         return f"Download error: {str(e)}", 500
+
+
+@app.route('/upload-to-instagram/<job_id>', methods=['POST'])
+def upload_to_instagram(job_id):
+    """Upload processed video to Instagram"""
+    try:
+        job = app.config['JOBS'].get(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+        
+        if job.get('status') != 'done':
+            return jsonify({'success': False, 'error': 'Video processing not complete yet'}), 400
+        
+        # Get caption from request or use stored caption
+        caption = request.json.get('caption', '') if request.is_json else request.form.get('caption', '')
+        if not caption:
+            caption = job.get('caption', '')
+        
+        # Get hashtags if provided
+        hashtags = request.json.get('hashtags', '') if request.is_json else request.form.get('hashtags', '')
+        if hashtags:
+            caption = f"{caption}\n\n{hashtags}" if caption else hashtags
+        
+        # Build public video URL
+        output_filename = job['output_filename']
+        public_url = INSTAGRAM_CONFIG['PUBLIC_VIDEO_URL']
+        
+        if not public_url:
+            # Try to construct from request
+            scheme = request.scheme
+            host = request.host
+            public_url = f"{scheme}://{host}"
+        
+        video_url = f"{public_url}/preview/{output_filename}"
+        
+        # Update job status
+        job['instagram_status'] = 'uploading'
+        job['message'] = 'Uploading to Instagram...'
+        
+        # Upload to Instagram in background
+        def upload_job():
+            try:
+                success, result = InstagramAPI.upload_reel(video_url, caption)
+                if success:
+                    job['instagram_status'] = 'success'
+                    job['instagram_url'] = result
+                    job['message'] = 'Uploaded to Instagram!'
+                else:
+                    job['instagram_status'] = 'failed'
+                    job['instagram_error'] = result
+                    job['message'] = f'Instagram upload failed: {result}'
+            except Exception as e:
+                job['instagram_status'] = 'failed'
+                job['instagram_error'] = str(e)
+                job['message'] = f'Instagram upload error: {str(e)}'
+        
+        thread = threading.Thread(target=upload_job, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Instagram upload started',
+            'status': 'uploading'
+        }), 202
+    
+    except Exception as e:
+        logger.error(f"Instagram upload endpoint error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/instagram-status/<job_id>')
+def instagram_status(job_id):
+    """Get Instagram upload status for a job"""
+    try:
+        job = app.config['JOBS'].get(job_id)
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        return jsonify({
+            'instagram_status': job.get('instagram_status'),
+            'instagram_url': job.get('instagram_url'),
+            'instagram_error': job.get('instagram_error'),
+            'message': job.get('message', '')
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
