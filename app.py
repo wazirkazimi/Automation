@@ -409,7 +409,7 @@ HTML_FORM = '''
             
             <div class="form-group">
                 <label>🏷️ Hashtags (Optional)</label>
-                <input type="text" name="hashtags" id="hashtagsInput" placeholder="#gaming #memes #viral" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; transition: border 0.3s;">
+                <input type="text" name="hashtags" id="hashtagsInput" placeholder="#gaming #memes #viral">
             </div>
             
             <button type="submit" id="submitBtn">🚀 Create Video</button>
@@ -828,9 +828,10 @@ def job_status(job_id):
     if job.get('status') == 'done':
         data['preview_url'] = f"/preview/{job['output_filename']}"
         data['download_url'] = f"/download/{job['output_filename']}"
-        # Include Instagram status if available
-        if 'instagram_status' in job:
-            data['instagram_status'] = job.get('instagram_status')
+        # Include Instagram status only if it's been set (not None)
+        instagram_status = job.get('instagram_status')
+        if instagram_status is not None:
+            data['instagram_status'] = instagram_status
             if job.get('instagram_url'):
                 data['instagram_url'] = job.get('instagram_url')
     if job.get('status') == 'error':
