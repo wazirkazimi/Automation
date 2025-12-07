@@ -1135,9 +1135,16 @@ def process_video():
                 # Post to Instagram
                 instagram_url = None
                 instagram_token = os.getenv('INSTAGRAM_ACCESS_TOKEN')
-                instagram_user_id = os.getenv('INSTAGRAM_USER_ID')
+                instagram_user_id = os.getenv('INSTAGRAM_USER_ID') or os.getenv('INSTAGRAM_BUSINESS_ACCOUNT_ID')
                 
-                if instagram_token and instagram_user_id:
+                # Skip Instagram in development mode or if no credentials
+                if os.getenv('FLASK_ENV') == 'development':
+                    logger.info("Development mode: Skipping Instagram upload")
+                    instagram_url = "skipped_dev_mode"
+                elif not instagram_token or not instagram_user_id:
+                    logger.warning("Instagram credentials not provided - skipping Instagram upload")
+                    instagram_url = "no_credentials"
+                else:
                     app.config['JOBS'][job_id]['message'] = 'Posting to Instagram...'
                     try:
                         # Make video publicly accessible for Instagram
@@ -1172,13 +1179,16 @@ def process_video():
                                 logger.info(f"✅ Video posted to Instagram: {instagram_url}")
                             else:
                                 logger.error(f"Instagram publish failed: {publish_response.text}")
+                                instagram_url = f"publish_failed: {publish_response.text}"
                         else:
-                            logger.error(f"Instagram upload failed: {response.text}")
+                            error_msg = response.text
+                            logger.error(f"Instagram upload failed: {error_msg}")
+                            instagram_url = f"upload_failed: {error_msg}"
                             
                     except Exception as e:
-                        logger.error(f"Instagram posting failed: {str(e)}")
-                else:
-                    logger.warning("Instagram credentials not provided - skipping Instagram upload")
+                        error_msg = str(e)
+                        logger.error(f"Instagram posting failed: {error_msg}")
+                        instagram_url = f"error: {error_msg}"
                 
                 app.config['JOBS'][job_id]['instagram_url'] = instagram_url
                 app.config['JOBS'][job_id]['status'] = 'done'
