@@ -15,11 +15,25 @@ pydantic-core==2.27.2
 requests==2.31.0
 requests-toolbelt==1.0.0
 
+# Google Drive API
+google-api-python-client==2.108.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0
+
 # Environment & Configuration
 python-dotenv==1.2.1
 
 # Production WSGI Server
 gunicorn==23.0.0
+
+# Google Drive API
+google-api-python-client==2.111.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.1.0
+
+# Additional HTTP client for Instagram API
+urllib3==2.1.0
+
 # Note: gevent can require native build dependencies on some hosts (libffi, gcc).
 # To avoid build failures on Render, do not pin gevent here unless you have the
 # corresponding OS-level build packages installed. If you want to use gevent in

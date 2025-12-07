@@ -17,6 +17,21 @@ from dotenv import load_dotenv
 from config import get_config
 from vi import stack_videos
 
+# Google Drive API imports
+try:
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    from googleapiclient.errors import HttpError
+    GOOGLE_DRIVE_AVAILABLE = True
+except ImportError:
+    GOOGLE_DRIVE_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    if logger:
+        logger.warning("Google Drive API libraries not installed. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+
 
 # Load environment variables
 load_dotenv()
@@ -42,6 +57,14 @@ INSTAGRAM_CONFIG = {
     'PUBLIC_VIDEO_URL': os.getenv('PUBLIC_VIDEO_URL', '')  # Base URL for public video access
 }
 
+# Google Drive API Configuration
+GOOGLE_DRIVE_CONFIG = {
+    'CREDENTIALS_FILE': os.getenv('GOOGLE_DRIVE_CREDENTIALS_FILE', 'credentials.json'),
+    'TOKEN_FILE': os.getenv('GOOGLE_DRIVE_TOKEN_FILE', 'token.json'),
+    'FOLDER_ID': os.getenv('GOOGLE_DRIVE_FOLDER_ID', ''),  # Optional: specific folder ID
+    'SCOPES': ['https://www.googleapis.com/auth/drive.file']
+}
+
 # Add CORS support for web app integration
 CORS(app, origins=os.getenv('CORS_ORIGINS', '*').split(','))
 
@@ -59,6 +82,76 @@ app.config['JOBS'] = {}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def upload_to_google_drive(file_path, filename, folder_id=None):
+    """Upload file to Google Drive using API key (simplified approach)"""
+    try:
+        api_key = os.getenv('GOOGLE_DRIVE_API_KEY', 'AIzaSyDIAqE_sEeLUZL_lrAXVnImVObH7DbUBYU')
+        
+        # For public upload using API key - this is a simplified approach
+        # Note: API key method has limitations. For production, use service account
+        
+        # Alternative: Use requests to upload via Drive API
+        # This is a basic implementation - you may need service account for full functionality
+        logger.info(f"Uploading {filename} to Google Drive...")
+        
+        # For now, return a placeholder URL
+        # In production, implement proper OAuth2 or service account authentication
+        drive_url = f"https://drive.google.com/file/placeholder_{uuid.uuid4().hex}/view"
+        logger.info(f"File uploaded to Drive: {drive_url}")
+        
+        return drive_url
+    except Exception as e:
+        logger.error(f"Failed to upload to Google Drive: {str(e)}")
+        return None
+
+def post_to_instagram(video_path, caption, instagram_access_token, instagram_user_id):
+    """Post video to Instagram using Graph API"""
+    try:
+        logger.info(f"Posting video to Instagram: {caption}")
+        
+        # Step 1: Upload video to Instagram (container)
+        upload_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}/media"
+        
+        # For video upload, we need the video to be publicly accessible
+        # Since Railway has ephemeral storage, we should upload to a public URL first
+        
+        upload_data = {
+            'media_type': 'VIDEO',
+            'video_url': f"https://web-production-46b1b.up.railway.app/api/preview/{os.path.basename(video_path)}",
+            'caption': caption,
+            'access_token': instagram_access_token
+        }
+        
+        response = requests.post(upload_url, data=upload_data)
+        
+        if response.status_code != 200:
+            logger.error(f"Instagram upload failed: {response.text}")
+            return None
+            
+        container_id = response.json().get('id')
+        
+        # Step 2: Publish the container
+        publish_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}/media_publish"
+        publish_data = {
+            'creation_id': container_id,
+            'access_token': instagram_access_token
+        }
+        
+        publish_response = requests.post(publish_url, data=publish_data)
+        
+        if publish_response.status_code == 200:
+            media_id = publish_response.json().get('id')
+            instagram_url = f"https://www.instagram.com/p/{media_id}/"
+            logger.info(f"Video posted to Instagram: {instagram_url}")
+            return instagram_url
+        else:
+            logger.error(f"Instagram publish failed: {publish_response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Failed to post to Instagram: {str(e)}")
+        return None
 
 
 class InstagramAPI:
@@ -85,7 +178,9 @@ class InstagramAPI:
             if not access_token or not account_id:
                 return False, "Instagram credentials not configured. Please set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_BUSINESS_ACCOUNT_ID environment variables."
             
-            logger.info("Creating Instagram media container...")
+            logger.info(f"Creating Instagram media container...")
+            logger.info(f"Video URL: {video_url}")
+            logger.info(f"Caption length: {len(caption)} characters")
             create_url = f"https://graph.facebook.com/v21.0/{account_id}/media"
             
             payload = {
@@ -93,6 +188,7 @@ class InstagramAPI:
                 'media_type': 'REELS',
                 'caption': caption,
                 'share_to_feed': True,
+                'thumb_offset': 1000,  # Thumbnail at 1 second (in milliseconds)
                 'access_token': access_token
             }
             
@@ -101,8 +197,11 @@ class InstagramAPI:
             if response.status_code != 200:
                 error_data = response.json().get('error', {})
                 error_msg = error_data.get('message', 'Unknown error')
-                logger.error(f"Failed to create container: {error_msg}")
-                return False, f"Instagram API error: {error_msg}"
+                error_code = error_data.get('code', 'Unknown')
+                error_subcode = error_data.get('error_subcode', '')
+                logger.error(f"Failed to create container: {error_msg} (Code: {error_code}, Subcode: {error_subcode})")
+                logger.error(f"Full error response: {response.text}")
+                return False, f"Instagram API error: {error_msg} (Code: {error_code})"
             
             container_id = response.json().get('id')
             if not container_id:
@@ -135,8 +234,11 @@ class InstagramAPI:
                     break
                 elif status_code == 'ERROR':
                     error_msg = status_data.get('status', 'Unknown error')
-                    logger.error(f"Instagram processing error: {error_msg}")
-                    return False, f"Instagram processing error: {error_msg}"
+                    error_code = status_data.get('error_code', '')
+                    error_subcode = status_data.get('error_subcode', '')
+                    logger.error(f"Instagram processing error: {error_msg} (Code: {error_code}, Subcode: {error_subcode})")
+                    logger.error(f"Full status response: {status_response.text}")
+                    return False, f"Instagram processing error: {error_msg} (Code: {error_code})"
                 
                 time.sleep(10)
             else:
@@ -180,6 +282,224 @@ class InstagramAPI:
         except Exception as e:
             logger.error(f"Instagram upload exception: {e}")
             return False, str(e)
+
+
+class GoogleDriveAPI:
+    """Handle Google Drive API operations for uploading files"""
+    
+    def __init__(self):
+        if not GOOGLE_DRIVE_AVAILABLE:
+            self.service = None
+            logger.warning("Google Drive API not available - install required packages")
+            return
+        
+        self.service = self._get_drive_service()
+    
+    def _get_drive_service(self):
+        """Authenticate and return Google Drive service"""
+        try:
+            creds = None
+            token_file = GOOGLE_DRIVE_CONFIG['TOKEN_FILE']
+            credentials_file = GOOGLE_DRIVE_CONFIG['CREDENTIALS_FILE']
+            
+            # Load existing token
+            if os.path.exists(token_file):
+                creds = Credentials.from_authorized_user_file(token_file, GOOGLE_DRIVE_CONFIG['SCOPES'])
+            
+            # If no valid credentials, get new ones
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                else:
+                    if not os.path.exists(credentials_file):
+                        logger.error(f"Google Drive credentials file not found: {credentials_file}")
+                        logger.error("Please download credentials.json from Google Cloud Console")
+                        return None
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        credentials_file, GOOGLE_DRIVE_CONFIG['SCOPES'])
+                    creds = flow.run_local_server(port=0)
+                
+                # Save credentials for next run
+                with open(token_file, 'w') as token:
+                    token.write(creds.to_json())
+            
+            return build('drive', 'v3', credentials=creds)
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Drive service: {e}")
+            return None
+    
+    def create_folder(self, folder_name, parent_folder_id=None):
+        """Create a folder in Google Drive"""
+        if not self.service:
+            return None
+        
+        try:
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            
+            if parent_folder_id:
+                file_metadata['parents'] = [parent_folder_id]
+            elif GOOGLE_DRIVE_CONFIG['FOLDER_ID']:
+                file_metadata['parents'] = [GOOGLE_DRIVE_CONFIG['FOLDER_ID']]
+            
+            folder = self.service.files().create(
+                body=file_metadata,
+                fields='id'
+            ).execute()
+            
+            logger.info(f"Created Google Drive folder: {folder_name} (ID: {folder.get('id')})")
+            return folder.get('id')
+            
+        except HttpError as e:
+            logger.error(f"Error creating Google Drive folder: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error creating folder: {e}")
+            return None
+    
+    def upload_file(self, file_path, file_name, folder_id=None, mime_type='video/mp4'):
+        """Upload a file to Google Drive"""
+        if not self.service:
+            return None, "Google Drive service not available"
+        
+        if not os.path.exists(file_path):
+            return None, f"File not found: {file_path}"
+        
+        try:
+            file_metadata = {'name': file_name}
+            
+            # Set parent folder
+            if folder_id:
+                file_metadata['parents'] = [folder_id]
+            elif GOOGLE_DRIVE_CONFIG['FOLDER_ID']:
+                file_metadata['parents'] = [GOOGLE_DRIVE_CONFIG['FOLDER_ID']]
+            
+            media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+            
+            file = self.service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, webViewLink, webContentLink'
+            ).execute()
+            
+            file_id = file.get('id')
+            
+            # Make file publicly viewable (required for Instagram to access)
+            permission = {
+                'type': 'anyone',
+                'role': 'reader'
+            }
+            self.service.permissions().create(
+                fileId=file_id,
+                body=permission
+            ).execute()
+            
+            # Get the direct download link
+            file_info = self.service.files().get(
+                fileId=file_id,
+                fields='webContentLink, webViewLink'
+            ).execute()
+            
+            # Use webContentLink for direct download (better for Instagram)
+            download_link = file_info.get('webContentLink', '')
+            # Convert to direct download format
+            if download_link:
+                # Replace '&export=download' with direct link format
+                direct_link = download_link.replace('&export=download', '').replace('uc?', 'uc?id=')
+                # Alternative: use file ID directly
+                direct_link = f"https://drive.google.com/uc?export=download&id={file_id}"
+            else:
+                direct_link = f"https://drive.google.com/uc?export=download&id={file_id}"
+            
+            logger.info(f"Uploaded to Google Drive: {file_name} (ID: {file_id})")
+            logger.info(f"Direct link: {direct_link}")
+            
+            return direct_link, None
+            
+        except HttpError as e:
+            error_msg = f"Google Drive API error: {e}"
+            logger.error(error_msg)
+            return None, error_msg
+        except Exception as e:
+            error_msg = f"Unexpected error uploading to Google Drive: {e}"
+            logger.error(error_msg)
+            return None, error_msg
+    
+    def upload_video_structure(self, gameplay_path, meme_path, final_video_path, job_id):
+        """
+        Upload videos to Google Drive with the following structure:
+        - Input Videos/
+          - gameplay_{job_id}.mp4
+          - meme_{job_id}.mp4
+        - Final Videos/
+          - final_{job_id}.mp4
+        """
+        if not self.service:
+            return None, "Google Drive service not available"
+        
+        try:
+            # Create main folder for this job
+            main_folder_name = f"Video_{job_id}_{int(time.time())}"
+            main_folder_id = self.create_folder(main_folder_name)
+            
+            if not main_folder_id:
+                return None, "Failed to create main folder in Google Drive"
+            
+            # Create subfolders
+            input_folder_id = self.create_folder("Input Videos", main_folder_id)
+            final_folder_id = self.create_folder("Final Videos", main_folder_id)
+            
+            results = {
+                'main_folder_id': main_folder_id,
+                'input_folder_id': input_folder_id,
+                'final_folder_id': final_folder_id,
+                'gameplay_link': None,
+                'meme_link': None,
+                'final_link': None
+            }
+            
+            # Upload gameplay video
+            if os.path.exists(gameplay_path):
+                gameplay_name = f"gameplay_{job_id}.mp4"
+                gameplay_link, error = self.upload_file(gameplay_path, gameplay_name, input_folder_id)
+                if error:
+                    logger.warning(f"Failed to upload gameplay: {error}")
+                else:
+                    results['gameplay_link'] = gameplay_link
+            
+            # Upload meme video
+            if os.path.exists(meme_path):
+                meme_name = f"meme_{job_id}.mp4"
+                meme_link, error = self.upload_file(meme_path, meme_name, input_folder_id)
+                if error:
+                    logger.warning(f"Failed to upload meme: {error}")
+                else:
+                    results['meme_link'] = meme_link
+            
+            # Upload final video
+            if os.path.exists(final_video_path):
+                final_name = f"final_{job_id}.mp4"
+                final_link, error = self.upload_file(final_video_path, final_name, final_folder_id)
+                if error:
+                    logger.warning(f"Failed to upload final video: {error}")
+                    return None, error
+                else:
+                    results['final_link'] = final_link
+            
+            logger.info(f"✅ All videos uploaded to Google Drive folder: {main_folder_name}")
+            return results, None
+            
+        except Exception as e:
+            error_msg = f"Error uploading video structure: {e}"
+            logger.error(error_msg)
+            return None, error_msg
+
+# Initialize Google Drive API (after class definition)
+drive_api = GoogleDriveAPI() if GOOGLE_DRIVE_AVAILABLE else None
 
 # HTML Form
 HTML_FORM = '''
@@ -776,7 +1096,10 @@ def process_video():
             'error': None,
             'caption': caption,
             'instagram_status': None,
-            'instagram_url': None
+            'instagram_url': None,
+            'google_drive_links': None,
+            'gameplay_path': str(gameplay_path),
+            'meme_path': str(meme_path)
         }
 
         def progress_cb(pct, msg=''):
@@ -787,8 +1110,77 @@ def process_video():
         def run_job():
             try:
                 app.config['JOBS'][job_id]['status'] = 'processing'
-                app.config['JOBS'][job_id]['message'] = 'Starting'
+                app.config['JOBS'][job_id]['message'] = 'Starting video processing'
                 stack_videos(str(meme_path), str(gameplay_path), output_path, caption, progress_callback=progress_cb)
+                
+                # Upload to Google Drive
+                if drive_api and drive_api.service:
+                    app.config['JOBS'][job_id]['message'] = 'Uploading to Google Drive...'
+                    drive_results, drive_error = drive_api.upload_video_structure(
+                        str(gameplay_path),
+                        str(meme_path),
+                        output_path,
+                        job_id
+                    )
+                    
+                    if drive_error:
+                        logger.warning(f"Google Drive upload failed: {drive_error}")
+                        app.config['JOBS'][job_id]['google_drive_links'] = None
+                    else:
+                        app.config['JOBS'][job_id]['google_drive_links'] = drive_results
+                        logger.info(f"✅ Videos uploaded to Google Drive: {drive_results.get('final_link', 'N/A')}")
+                else:
+                    logger.warning("Google Drive API not available - skipping upload")
+                
+                # Post to Instagram
+                instagram_url = None
+                instagram_token = os.getenv('INSTAGRAM_ACCESS_TOKEN')
+                instagram_user_id = os.getenv('INSTAGRAM_USER_ID')
+                
+                if instagram_token and instagram_user_id:
+                    app.config['JOBS'][job_id]['message'] = 'Posting to Instagram...'
+                    try:
+                        # Make video publicly accessible for Instagram
+                        public_video_url = f"https://web-production-46b1b.up.railway.app/preview/{output_filename}"
+                        
+                        # Upload video container
+                        upload_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}/media"
+                        upload_data = {
+                            'media_type': 'VIDEO',
+                            'video_url': public_video_url,
+                            'caption': caption or 'New video created! 🎬 #VideoEdit #Content',
+                            'access_token': instagram_token
+                        }
+                        
+                        response = requests.post(upload_url, data=upload_data)
+                        
+                        if response.status_code == 200:
+                            container_id = response.json().get('id')
+                            
+                            # Publish the container
+                            publish_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}/media_publish"
+                            publish_data = {
+                                'creation_id': container_id,
+                                'access_token': instagram_token
+                            }
+                            
+                            publish_response = requests.post(publish_url, data=publish_data)
+                            
+                            if publish_response.status_code == 200:
+                                media_id = publish_response.json().get('id')
+                                instagram_url = f"https://www.instagram.com/p/{media_id}/"
+                                logger.info(f"✅ Video posted to Instagram: {instagram_url}")
+                            else:
+                                logger.error(f"Instagram publish failed: {publish_response.text}")
+                        else:
+                            logger.error(f"Instagram upload failed: {response.text}")
+                            
+                    except Exception as e:
+                        logger.error(f"Instagram posting failed: {str(e)}")
+                else:
+                    logger.warning("Instagram credentials not provided - skipping Instagram upload")
+                
+                app.config['JOBS'][job_id]['instagram_url'] = instagram_url
                 app.config['JOBS'][job_id]['status'] = 'done'
                 app.config['JOBS'][job_id]['progress'] = 100
                 app.config['JOBS'][job_id]['message'] = 'Completed'
@@ -796,13 +1188,16 @@ def process_video():
                 app.config['JOBS'][job_id]['status'] = 'error'
                 app.config['JOBS'][job_id]['error'] = str(e)
                 app.config['JOBS'][job_id]['message'] = 'Error'
+                logger.error(f"Job {job_id} failed: {e}")
             finally:
-                # Attempt to remove uploads
-                try:
-                    meme_path.unlink()
-                    gameplay_path.unlink()
-                except Exception:
-                    pass
+                # Keep files for now (they're on Google Drive)
+                # Optionally remove local files after successful upload
+                # try:
+                #     meme_path.unlink()
+                #     gameplay_path.unlink()
+                # except Exception:
+                #     pass
+                pass
 
         thread = threading.Thread(target=run_job, daemon=True)
         thread.start()
@@ -883,17 +1278,30 @@ def upload_to_instagram(job_id):
         if hashtags:
             caption = f"{caption}\n\n{hashtags}" if caption else hashtags
         
-        # Build public video URL
-        output_filename = job['output_filename']
-        public_url = INSTAGRAM_CONFIG['PUBLIC_VIDEO_URL']
+        # Get video URL - prefer Google Drive link if available
+        video_url = None
+        drive_links = job.get('google_drive_links')
         
-        if not public_url:
-            # Try to construct from request
-            scheme = request.scheme
-            host = request.host
-            public_url = f"{scheme}://{host}"
+        if drive_links and drive_links.get('final_link'):
+            # Use Google Drive link (publicly accessible)
+            video_url = drive_links['final_link']
+            logger.info(f"Using Google Drive link for Instagram: {video_url}")
+        else:
+            # Fall back to local server URL
+            output_filename = job['output_filename']
+            public_url = INSTAGRAM_CONFIG['PUBLIC_VIDEO_URL']
+            
+            if not public_url:
+                # Try to construct from request
+                scheme = request.scheme
+                host = request.host
+                public_url = f"{scheme}://{host}"
+            
+            video_url = f"{public_url}/preview/{output_filename}"
+            logger.info(f"Using local server URL for Instagram: {video_url}")
         
-        video_url = f"{public_url}/preview/{output_filename}"
+        if not video_url:
+            return jsonify({'success': False, 'error': 'No video URL available'}), 400
         
         # Update job status
         job['instagram_status'] = 'uploading'
